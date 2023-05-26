@@ -3,6 +3,17 @@
 #include <v1model.p4>
 
 
+ /*        0                1                  2              3
+ * +----------------+----------------+----------------+---------------+
+ * |      P         |       4        |     Version    |     Op        |
+ * +----------------+----------------+----------------+---------------+
+ * |                                Hand                              |
+ * +----------------+----------------+----------------+---------------+
+ * |                                Ace                               |
+ * +----------------+----------------+----------------+---------------+
+ * |                               Result                             |
+ 
+ 
 /*************************************************************************
 *********************** H E A D E R S  ***********************************
 *************************************************************************/
@@ -19,10 +30,17 @@ header ethernet_t {
 /* this is a custom protocol header for the blackjack game/
 */
 
+const bit<16> TYPE_BLACK = 0x1234;
+
 header black_t {
 	
-	bit<8> hand;
-	bit<8> res;
+	bit<8> p;
+    bit<8> four;
+    bit<8> ver;
+    bit<8>  op;
+	bit<32> hand;
+	bit<32> ace;
+	bit<32> result;
 }
 
 struct metadata {
@@ -50,7 +68,10 @@ parser MyParser(packet_in packet,
     
     state parse_ethernet{
     	packet.extract(hdr.ethernet);
-        transition parse_black;
+        transition select(hdr.ethernet.etherType){
+        	0x1234: parse_black;
+        	default: accept;
+        	}
         	
    }
     state parse_black{
@@ -76,51 +97,50 @@ control MyVerifyChecksum(inout headers hdr, inout metadata meta) {
 control MyIngress(inout headers hdr,
                   inout metadata meta,
                   inout standard_metadata_t standard_metadata) {
-    action drop() {
-        mark_to_drop(standard_metadata);
-    }
 
-    action send_back(bit<8> result) {
+    action send_back() {
         /* Send back the result*/
         bit<48> temp_Mac; 
-        hdr.black.res = result;
         temp_Mac = hdr.ethernet.srcAddr;
         hdr.ethernet.srcAddr = hdr.ethernet.dstAddr;
-        hdr.ethernet.dstAddr = temp_Mac;
-        
+        hdr.ethernet.dstAddr = temp_Mac;       
         standard_metadata.egress_spec = standard_metadata.ingress_port;       
         
     }
     
     action hit_or_stand(){
     	/*if the hand card value is greater than 17 than stand, otherwise hit*/
-    	bit<8> result
-    	if hdr.black.hand > 17{
-    		result = 0 ;/*This stands for a stand action*/
-    		}
-    	else hdr.black.hand <= 17{
-    		result = 1 ;/*This stands for a hit action*/
-    	send_back(result);
+    	if (hdr.black.hand > 17 && hdr.black.ace == 0){
+    		hdr.black.result = 0 ;
+    		send_back(); 
+    	}else {
+    		hdr.black.result = 1;
+    		send_back(); 
+    		}    	
+    }
+    
+    action operation_drop() {
+        mark_to_drop(standard_metadata);
     }
 
     table blackjack {
-        key = {
-            hdr.black.hand: exact;
-        }
+    	key={
+    		hdr.black.p:   exact;
+    	}
         actions = {
             hit_or_stand;
-            drop;
+            operation_drop;
             NoAction;
         }
         size = 1024;
-        default_action = hit_or_stand;
+        const default_action = hit_or_stand();
     }
 
     apply {
         /* TODO: Apply the action when reuqired
          */
         if (hdr.black.isValid()){
-        blackjack.apply();
+        	blackjack.apply();
         }
     }
 }

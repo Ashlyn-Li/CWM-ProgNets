@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 
+import re
+
+from scapy.all import *
+
 '''
 Balckjack game rule
 
@@ -12,6 +16,19 @@ After initial bets are placed, the dealer deals the cards, either from one or tw
 In this programme, the Raspberry Pi will be the dealer, and you(lab machine) will be the player.
 
 '''
+
+class Black(Packet):
+    name = "Black"
+    fields_desc = [ StrFixedLenField("P", "P", length=1),
+                    StrFixedLenField("Four", "4", length=1),
+                    XByteField("version", 0x01),
+                    StrFixedLenField("op", "+", length=1),
+    				IntField("hand", 0),
+                    IntField("ace", 0),
+                    IntField("result", 11)]
+                    
+bind_layers(Ether, Black, type=0x1234)
+
 import random
 
 #Initial the global variables
@@ -67,6 +84,11 @@ class Hand:
         while self.value > 21 and self.aces:
             self.value -= 10
             self.aces -= 1
+            
+    def clear(self):
+    	self.cards.clear()
+    	self.value = 0
+    	self.aces = 0
 
 #The chip calss represents the chips you have
 #Win_bet represents the case where you win the game and therefore your chip increase
@@ -171,6 +193,35 @@ def dealer_wins(player, dealer, chips):
 #This is when the player and the dealer have blackjack(21points), then they enter a push round
 def push(player, dealer):
     print("It's a tie! Push.")
+    
+#This is the funciton for sending the packet to Raspberry Pi
+def send_hand(value,ace=0):
+    dst_mac = "00:00:00:00:00:01"
+    src_mac= "00:00:00:00:00:02"
+    src_ip = "169.254.21.80"
+    dst_ip = "192.168.10.2"
+    iface = "enx0c37965f8a0a"
+    c = 0
+    pkt = Ether(dst='00:04:00:00:00:00', type=0x1234) / Black(op='+', hand=int(value), ace=int(ace))
+    
+    pkt = pkt/' '
+    resp = srp1(pkt, iface=iface,timeout=5, verbose=True)
+    
+    if resp:        		
+        var = resp[Black]
+        if var:
+             res = var.result		
+             return res 
+        else:
+            return 'error'
+            print("cannot find Black header in the packet")
+    else:	
+        print("Didn't receive response")
+        return 'error'
+    #    except Exception as error:
+    #    	print('00', error)
+            
+        
 
 # Initialize the game
 #Set up the deck
@@ -186,6 +237,8 @@ player_chips = Chips()
 while True:
     # Opening message
     print("Welcome to Blackjack!")
+    player_hand.clear()
+    dealer_hand.clear()
 
     # Take player's bet
     take_bet(player_chips)
@@ -196,6 +249,7 @@ while True:
     dealer_hand.add_card(deck.deal())
     player_hand.add_card(deck.deal())
     dealer_hand.add_card(deck.deal())
+    
 
     # Show initial cards (hide one of the dealer's cards)
     show_some(player_hand, dealer_hand)
@@ -212,13 +266,20 @@ while True:
         #Check if the player bust or not
         if player_hand.value > 21:
             player_busts(player_hand, player_chips)
+            show_all(player_hand,dealer_hand)
             break
 
     #If the player hasn't bust yet, the dealer will then continue to play
-    if player_hand.value <= 21:
+        if player_hand.value <= 21:
         # Dealer's turn (automated with Raspberry Pi switch)
         #while dealer_hand.value < 17:
             #hit(deck, dealer_hand)
+        	res = send_hand(dealer_hand.value,dealer_hand.aces)
+        	print('pkt', res)
+        	if res == 1:
+        		hit(deck,dealer_hand)                   
+            
+            
         # The above code is for original python ongly version game, but now we want to send the packets to Raspberry Pi and let it to make the desicion
 
         # Show all cards
@@ -240,5 +301,6 @@ while True:
     # Ask to play again
     play_again = input("Do you want to play again? (y/n): ")
     if play_again.lower() != 'y':
-        break
+    	break
+    	
 
